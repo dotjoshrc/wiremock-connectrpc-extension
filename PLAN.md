@@ -126,6 +126,21 @@ schema configuration, mappings, and protocol limitations. `./mvnw verify` passes
 client in both encodings. Validation used JDK 25 targeting Java 17; JDK 17
 runtime verification remains outstanding. Artifacts have not been published.
 
+### 6. Partial matching and typed error details
+
+- [x] Add opt-in partial matching while preserving exact matching by default.
+- [x] Preserve protobuf normalization, explicit defaults, optional presence, and
+      repeated ordering; match nested objects and map keys as subsets.
+- [x] Encode JSON-authored protobuf error details in Connect's wire format.
+- [x] Resolve detail types throughout the descriptor set, including nested types.
+- [x] Verify typed error decoding with a real Go client for both request codecs.
+
+**Completed:** Use matcher parameter `ignoreExtraFields: true` for partial
+matching. Repeated fields and well-known types remain complete-value comparisons.
+Use `error.details` entries with `type` and `jsonBody` for structured errors.
+The standalone example includes a typed detail, decoded by the Go integration
+client. The README documents configuration and matching semantics.
+
 ## Minimal design
 
 | Component | Responsibility |

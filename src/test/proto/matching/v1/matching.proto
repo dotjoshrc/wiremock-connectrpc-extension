@@ -23,6 +23,10 @@ message MatchRequest {
   map<string, int32> counts = 7;
   google.protobuf.Timestamp observed_at = 8;
   google.protobuf.Any detail = 9;
+  Details context = 10;
+  repeated Details entries = 11;
+  map<string, Details> contexts = 12;
+  map<int64, Details> numeric_contexts = 13;
 }
 
 message MatchResponse {
@@ -35,6 +39,10 @@ message WatchResponse {}
 
 message Details {
   string text = 1;
+  int32 number = 2;
+  message Nested {
+    string reason = 1;
+  }
 }
 
 enum Status {

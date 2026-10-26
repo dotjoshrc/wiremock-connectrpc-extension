@@ -35,6 +35,7 @@ class ConnectRpcStandaloneIT {
             for (String encoding : new String[] {"json", "proto"}) {
                 assertCommandSucceeds(client.toString(), baseUrl, encoding);
                 assertCommandSucceeds(client.toString(), "-expect-error", "permission_denied",
+                        "-expect-error-detail", "Denied",
                         baseUrl, encoding, "Denied");
             }
         } finally {

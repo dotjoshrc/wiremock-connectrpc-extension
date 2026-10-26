@@ -13,6 +13,8 @@ import com.github.tomakehurst.wiremock.matching.MatchResult;
 import com.github.tomakehurst.wiremock.matching.RequestMatcherExtension;
 import com.github.tomakehurst.wiremock.stubbing.SubEvent;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -20,6 +22,7 @@ import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.UninitializedMessageException;
 import com.google.protobuf.util.JsonFormat;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -42,10 +45,14 @@ public final class ConnectRequestMatcher extends RequestMatcherExtension {
 
     @Override
     public MatchResult match(Request request, Parameters parameters) {
-        if (parameters == null || !parameters.keySet().equals(Set.of("jsonBody"))) {
+        if (parameters == null || !parameters.containsKey("jsonBody")
+                || !Set.of("jsonBody", "ignoreExtraFields").containsAll(parameters.keySet())
+                || (parameters.containsKey("ignoreExtraFields")
+                    && !(parameters.get("ignoreExtraFields") instanceof Boolean))) {
             return mismatch("jsonBody parameter", String.valueOf(parameters),
-                    "Configure connect-rpc with exactly one parameter: jsonBody");
+                    "Configure jsonBody and optionally a boolean ignoreExtraFields");
         }
+        boolean partial = Boolean.TRUE.equals(parameters.get("ignoreExtraFields"));
         if (!RequestMethod.POST.equals(request.getMethod())) {
             return mismatch("POST", request.getMethod().getName(), "Only unary POST requests are supported");
         }
@@ -72,11 +79,15 @@ public final class ConnectRequestMatcher extends RequestMatcherExtension {
         TypeRegistry types = TypeRegistry.newBuilder().add(method.getInputType()).build();
         JsonFormat.Parser parser = JsonFormat.parser().usingTypeRegistry(types);
         JsonFormat.Printer printer = JsonFormat.printer().usingTypeRegistry(types).omittingInsignificantWhitespace();
+        if (partial) {
+            printer = printer.alwaysPrintFieldsWithNoPresence();
+        }
         String expected;
         try {
             DynamicMessage.Builder builder = DynamicMessage.newBuilder(method.getInputType());
+            // shortcut: nested proto2 required fields need values; use a partial-aware parser if subsets are needed there.
             parser.merge(Json.write(parameters.get("jsonBody")), builder);
-            expected = printer.print(builder.build());
+            expected = printer.print(partial ? builder.buildPartial() : builder.build());
         } catch (InvalidProtocolBufferException | UninitializedMessageException | IllegalArgumentException exception) {
             return mismatch("Valid protobuf JSON expectation", Json.write(parameters.get("jsonBody")),
                     "Invalid jsonBody configuration: " + exception.getMessage());
@@ -103,10 +114,55 @@ public final class ConnectRequestMatcher extends RequestMatcherExtension {
         } catch (IOException | UninitializedMessageException | IllegalArgumentException exception) {
             return mismatch(expected, "Invalid request body", "Cannot decode Connect request: " + exception.getMessage());
         }
-        if (Json.read(expected, JsonNode.class).equals(Json.read(actual, JsonNode.class))) {
+        JsonNode expectedJson = Json.read(expected, JsonNode.class);
+        JsonNode actualJson = Json.read(actual, JsonNode.class);
+        if (partial ? matchesPartial(method.getInputType(), Json.read(Json.write(parameters.get("jsonBody")), JsonNode.class),
+                expectedJson, actualJson) : expectedJson.equals(actualJson)) {
             return MatchResult.exactMatch();
         }
         return mismatch(expected, actual, "Decoded Connect request differs from jsonBody");
+    }
+
+    private static boolean matchesPartial(Descriptor type, JsonNode selected, JsonNode expected, JsonNode actual) {
+        if (expected == null || actual == null) {
+            return Objects.equals(expected, actual);
+        }
+        // Well-known types have custom JSON representations and are compared as complete values.
+        if (!selected.isObject() || !expected.isObject() || type.getFullName().startsWith("google.protobuf.")) {
+            return expected.equals(actual);
+        }
+        for (var entry : selected.properties()) {
+            FieldDescriptor field = type.getFields().stream()
+                    .filter(candidate -> candidate.getName().equals(entry.getKey())
+                            || candidate.getJsonName().equals(entry.getKey()))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown field " + entry.getKey()));
+            JsonNode expectedValue = expected.get(field.getJsonName());
+            JsonNode actualValue = actual.get(field.getJsonName());
+            if (field.isMapField() && entry.getValue().isObject() && expectedValue != null && actualValue != null) {
+                FieldDescriptor keyField = field.getMessageType().findFieldByName("key");
+                FieldDescriptor valueField = field.getMessageType().findFieldByName("value");
+                for (var key : entry.getValue().properties()) {
+                    String canonicalKey = switch (keyField.getJavaType()) {
+                        case INT, LONG -> new BigDecimal(key.getKey()).toBigIntegerExact().toString();
+                        default -> key.getKey();
+                    };
+                    if (!matchesPartialValue(valueField, key.getValue(), expectedValue.get(canonicalKey),
+                            actualValue.get(canonicalKey))) {
+                        return false;
+                    }
+                }
+            } else if (!matchesPartialValue(field, entry.getValue(), expectedValue, actualValue)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean matchesPartialValue(FieldDescriptor field, JsonNode selected, JsonNode expected, JsonNode actual) {
+        if (!field.isRepeated() && field.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+            return matchesPartial(field.getMessageType(), selected, expected, actual);
+        }
+        return Objects.equals(expected, actual);
     }
 
     private static MatchResult mismatch(String expected, String actual, String message) {

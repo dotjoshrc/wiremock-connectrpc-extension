@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 func main() {
 	expectedError := flag.String("expect-error", "", "expected Connect error code instead of a successful greeting")
+	expectedDetail := flag.String("expect-error-detail", "", "expected name in a GreetRequest error detail")
 	flag.Parse()
 	args := flag.Args()
 	baseURL := "http://localhost:8080"
@@ -44,6 +46,20 @@ func main() {
 	if *expectedError != "" {
 		if err == nil || connect.CodeOf(err).String() != *expectedError {
 			log.Fatalf("expected Connect error %q, got %v", *expectedError, err)
+		}
+		if *expectedDetail != "" {
+			var connectError *connect.Error
+			if !errors.As(err, &connectError) || len(connectError.Details()) != 1 {
+				log.Fatalf("expected one Connect error detail, got %v", err)
+			}
+			detail, decodeErr := connectError.Details()[0].Value()
+			if decodeErr != nil {
+				log.Fatalf("cannot decode error detail: %v", decodeErr)
+			}
+			request, ok := detail.(*examplev1.GreetRequest)
+			if !ok || request.GetName() != *expectedDetail {
+				log.Fatalf("unexpected error detail: %v", detail)
+			}
 		}
 		fmt.Println(err)
 		return

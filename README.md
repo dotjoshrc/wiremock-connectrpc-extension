@@ -148,8 +148,8 @@ the WireMock standalone JAR. `ConnectRpcExample` is a development launcher under
 the test sources. No artifacts have been published to Maven Central.
 
 The supported protocol scope is unary Connect POST with JSON or binary protobuf,
-exact message matching, and standard errors without error details. Streaming,
-gRPC/gRPC-Web, unary GET, compression, partial matching, and schema hot reload
+exact or partial message matching, and standard errors with typed protobuf details. Streaming,
+gRPC/gRPC-Web, unary GET, compression, and schema hot reload
 are unsupported. Browser CORS and WireMock versions other than 3.13.2 have not
 been verified.
 
@@ -316,7 +316,8 @@ Inside a WireMock mapping's `request`, use the named matcher:
 ```
 
 The request path selects the schema's method and its input type. `jsonBody` is
-protobuf JSON, not a WireMock JSON pattern. It is the only matcher parameter.
+protobuf JSON, not a WireMock JSON pattern. The optional `ignoreExtraFields`
+boolean enables partial matching; it defaults to `false`.
 Keep routing, header constraints, scenarios, and delays in ordinary WireMock
 configuration. The matcher accepts unary POST bodies with `application/json`
 or `application/proto`, including content-type parameters.
@@ -325,8 +326,8 @@ Matching is exact after parsing both messages and converting them to canonical
 protobuf JSON:
 
 - JSON field order and map key order do not matter; repeated field order does.
-- Extra populated known fields cause a mismatch. Partial matching and JSON
-  pattern placeholders are not supported.
+- Extra populated known fields cause a mismatch by default. JSON pattern
+  placeholders are not supported.
 - Implicit default values compare as unset. Explicit optional presence is
   preserved.
 - Protobuf JSON field aliases, enum names/numbers, bytes, 64-bit integers, and
@@ -334,6 +335,34 @@ protobuf JSON:
   must be defined in the request's file or its imports.
 - Unknown JSON fields are rejected. Unknown binary fields are ignored during
   JSON conversion, allowing clients to send newer protobuf fields.
+
+To check only selected fields, configure partial matching:
+
+```json
+{
+  "name": "connect-rpc",
+  "parameters": {
+    "jsonBody": { "name": "Josh" },
+    "ignoreExtraFields": true
+  }
+}
+```
+
+With `ignoreExtraFields: true`, omitted fields are unconstrained. Supplied
+fields still use protobuf normalization, including field aliases and explicit
+defaults: an expected `"name": ""` does not match `"name": "Josh"`. Optional
+presence is preserved. JSON `null` is treated as unset and adds no constraint.
+Nested message objects match recursively, and maps may
+contain additional keys; supplied map values must match. Repeated fields remain
+exact, including order and all fields within repeated messages. An empty
+repeated array requires an empty field, while an empty map places no constraints
+on its keys. Well-known types, including `Any`, compare as complete normalized
+values. An empty root expectation matches any valid request for the method.
+Unknown JSON fields and malformed requests are still rejected.
+For proto2, root-level required fields may be omitted from a partial expectation,
+but any nested message object included must supply its required fields because
+the protobuf JSON parser validates nested objects during parsing. Requests must
+always include all required fields.
 
 Malformed requests, invalid expectations, unknown RPCs, unsupported content
 types, streaming methods, and compressed requests do not match. Diagnostics
@@ -372,8 +401,33 @@ For errors, replace `jsonBody` with `error`:
 ```
 
 Supply exactly one of `jsonBody` or `error`. Errors require a standard Connect
-code and accept an optional string message. They always use `application/json`,
-even for protobuf requests. Error details are not yet supported.
+code and accept an optional string message and `details` array. They always use
+`application/json`, even for protobuf requests.
+
+Author details as protobuf JSON using a fully qualified message name from the
+loaded descriptor set:
+
+```json
+{
+  "error": {
+    "code": "permission_denied",
+    "message": "Access denied",
+    "details": [
+      { "type": "example.v1.GreetRequest", "jsonBody": { "name": "Denied" } }
+    ]
+  }
+}
+```
+
+The transformer encodes each detail as Connect's `{"type": "...", "value": "..."}`
+wire representation, where `value` is unpadded Base64 protobuf binary. Details
+keep their configured order. Types may be nested or defined in any file in the
+descriptor set, including files without services. Their `jsonBody` supports
+well-known types and `Any` messages resolved from that set. Clients need the
+corresponding generated types to decode details into typed messages. For example,
+Connect-Go exposes them through `connect.Error.Details()` and `ErrorDetail.Value()`.
+Unknown types, malformed detail JSON, and unsupported configuration keys produce
+an `internal` error with a request-journal diagnostic.
 
 | Connect code | HTTP status |
 | --- | --- |

@@ -18,7 +18,10 @@ import com.google.protobuf.TypeRegistry;
 import com.google.protobuf.UninitializedMessageException;
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -95,9 +98,9 @@ public final class ConnectResponseTransformer implements ResponseDefinitionTrans
         }
     }
 
-    private static ResponseDefinition configuredError(ServeEvent event, Object value) {
+    private ResponseDefinition configuredError(ServeEvent event, Object value) throws InvalidProtocolBufferException {
         if (!(value instanceof Map<?, ?> config)
-                || !Set.of("code", "message").containsAll(config.keySet())
+                || !Set.of("code", "message", "details").containsAll(config.keySet())
                 || !(config.get("code") instanceof String code)
                 || !ERROR_STATUSES.containsKey(code)) {
             throw new IllegalArgumentException("error requires a valid Connect code and an optional string message");
@@ -105,14 +108,39 @@ public final class ConnectResponseTransformer implements ResponseDefinitionTrans
         if (config.containsKey("message") && !(config.get("message") instanceof String)) {
             throw new IllegalArgumentException("error.message must be a string");
         }
-        return error(event, code, (String) config.get("message"));
+        List<Map<String, String>> details = new ArrayList<>();
+        if (config.containsKey("details")) {
+            if (!(config.get("details") instanceof List<?> configuredDetails)) {
+                throw new IllegalArgumentException("error.details must be an array");
+            }
+            for (Object item : configuredDetails) {
+                if (!(item instanceof Map<?, ?> detail)
+                        || !detail.keySet().equals(Set.of("type", "jsonBody"))
+                        || !(detail.get("type") instanceof String type)) {
+                    throw new IllegalArgumentException("Each error detail requires type and jsonBody");
+                }
+                DynamicMessage.Builder builder = DynamicMessage.newBuilder(schemas.resolveMessage(type));
+                JsonFormat.parser().usingTypeRegistry(schemas.typeRegistry())
+                        .merge(Json.write(detail.get("jsonBody")), builder);
+                details.add(Map.of("type", type,
+                        "value", Base64.getEncoder().withoutPadding().encodeToString(builder.build().toByteArray())));
+            }
+        }
+        return error(event, code, (String) config.get("message"), details);
     }
 
     private static ResponseDefinition error(ServeEvent event, String code, String message) {
+        return error(event, code, message, List.of());
+    }
+
+    private static ResponseDefinition error(ServeEvent event, String code, String message, List<Map<String, String>> details) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", code);
         if (message != null) {
             body.put("message", message);
+        }
+        if (!details.isEmpty()) {
+            body.put("details", details);
         }
         return response(event, ERROR_STATUSES.get(code), "application/json",
                 Json.write(body).getBytes(StandardCharsets.UTF_8));

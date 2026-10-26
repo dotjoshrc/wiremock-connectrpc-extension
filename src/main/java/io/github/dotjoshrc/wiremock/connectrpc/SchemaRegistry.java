@@ -2,11 +2,13 @@ package io.github.dotjoshrc.wiremock.connectrpc;
 
 import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
+import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.DescriptorValidationException;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.Descriptors.MethodDescriptor;
 import com.google.protobuf.Descriptors.ServiceDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.TypeRegistry;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -24,9 +26,11 @@ public final class SchemaRegistry {
             "/((?:[A-Za-z_][A-Za-z0-9_]*\\.)*+[A-Za-z_][A-Za-z0-9_]*)/([A-Za-z_][A-Za-z0-9_]*)");
 
     private final Map<String, ServiceDescriptor> services;
+    private final TypeRegistry types;
 
-    private SchemaRegistry(Map<String, ServiceDescriptor> services) {
+    private SchemaRegistry(Map<String, ServiceDescriptor> services, TypeRegistry types) {
         this.services = Map.copyOf(services);
+        this.types = types;
     }
 
     /** Loads a descriptor set with all imports included, without compiling any .proto files. */
@@ -45,14 +49,30 @@ public final class SchemaRegistry {
         }
 
         Map<String, ServiceDescriptor> services = new LinkedHashMap<>();
+        TypeRegistry.Builder types = TypeRegistry.newBuilder();
         for (FileDescriptor file : buildFiles(descriptorSet.getFileList()).values()) {
+            types.add(file.getMessageTypes());
             for (ServiceDescriptor service : file.getServices()) {
                 if (services.putIfAbsent(service.getFullName(), service) != null) {
                     throw new IllegalArgumentException("Duplicate protobuf service '" + service.getFullName() + "'");
                 }
             }
         }
-        return new SchemaRegistry(services);
+        return new SchemaRegistry(services, types.build());
+    }
+
+    /** Resolves an error-detail message, including nested types and files without services. */
+    public Descriptor resolveMessage(String fullName) {
+        Descriptor descriptor = types.find(fullName);
+        if (descriptor == null) {
+            throw new IllegalArgumentException("Unknown protobuf message '" + fullName + "'");
+        }
+        return descriptor;
+    }
+
+    /** All message types loaded from the descriptor set, for protobuf JSON Any resolution. */
+    public TypeRegistry typeRegistry() {
+        return types;
     }
 
     /** Resolves a Connect path to its method, including input and output message descriptors. */

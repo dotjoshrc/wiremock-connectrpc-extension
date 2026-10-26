@@ -15,7 +15,13 @@
   "response": {
     "transformers": ["connect-rpc-response"],
     "transformerParameters": {
-      "error": { "code": "permission_denied", "message": "Access denied" }
+      "error": {
+        "code": "permission_denied",
+        "message": "Access denied",
+        "details": [
+          { "type": "example.v1.GreetRequest", "jsonBody": { "name": "Denied" } }
+        ]
+      }
     }
   }
 }

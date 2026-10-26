@@ -21,6 +21,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -112,6 +114,68 @@ class ConnectResponseTransformerTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"json", "proto"})
+    void encodesTypedErrorDetailsIncludingNestedAndWellKnownMessages(String encoding) throws Exception {
+        stub(RPC_PATH, aResponse().withTransformerParameter("error", Map.of(
+                "code", "invalid_argument", "message", "Invalid request", "details", List.of(
+                        Map.of("type", "matching.v1.Details", "jsonBody", Map.of("text", "Denied ☃", "number", 42)),
+                        Map.of("type", "matching.v1.Details.Nested", "jsonBody", Map.of("reason", "policy")),
+                        Map.of("type", "google.protobuf.Timestamp", "jsonBody", "2026-10-25T00:00:00Z"),
+                        Map.of("type", "google.protobuf.Any", "jsonBody", Map.of(
+                                "@type", "type.googleapis.com/matching.v1.Details", "text", "nested"))))));
+
+        HttpResponse<byte[]> response = send(RPC_PATH, "POST", "application/" + encoding, Map.of());
+        assertEquals(400, response.statusCode());
+        assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
+        Map<?, ?> error = body(response);
+        assertEquals("invalid_argument", error.get("code"));
+        assertEquals("Invalid request", error.get("message"));
+        List<?> details = (List<?>) error.get("details");
+        assertEquals(4, details.size());
+        Map<?, ?> first = (Map<?, ?>) details.get(0);
+        assertEquals("matching.v1.Details", first.get("type"));
+        DynamicMessage firstMessage = decodeDetail(first);
+        assertEquals("Denied ☃", firstMessage.getField(firstMessage.getDescriptorForType().findFieldByName("text")));
+        assertEquals(42, firstMessage.getField(firstMessage.getDescriptorForType().findFieldByName("number")));
+        DynamicMessage nested = decodeDetail((Map<?, ?>) details.get(1));
+        assertEquals("policy", nested.getField(nested.getDescriptorForType().findFieldByName("reason")));
+        DynamicMessage timestamp = decodeDetail((Map<?, ?>) details.get(2));
+        assertEquals("\"2026-10-25T00:00:00Z\"", JsonFormat.printer().print(timestamp));
+        DynamicMessage any = decodeDetail((Map<?, ?>) details.get(3));
+        assertTrue(JsonFormat.printer().usingTypeRegistry(schemas.typeRegistry()).print(any).contains("nested"));
+    }
+
+    @Test
+    void permitsEmptyDetailsAndEmptyDetailMessages() throws Exception {
+        stub(RPC_PATH, aResponse().withTransformerParameter("error", Map.of("code", "internal", "details", List.of())));
+        assertEquals(Map.of("code", "internal"), body(send(RPC_PATH, "POST", "application/json", Map.of())));
+        stub(RPC_PATH, aResponse().withTransformerParameter("error", Map.of("code", "internal", "details", List.of(
+                Map.of("type", "matching.v1.Details", "jsonBody", Map.of())))));
+        assertEquals(List.of(Map.of("type", "matching.v1.Details", "value", "")),
+                body(send(RPC_PATH, "POST", "application/json", Map.of())).get("details"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "{}", "42", "[null]", "[{}]",
+            "[{\"type\":\"missing.Type\",\"jsonBody\":{}}]",
+            "[{\"type\":42,\"jsonBody\":{}}]",
+            "[{\"type\":\"matching.v1.Details\"}]",
+            "[{\"type\":\"matching.v1.Details\",\"jsonBody\":null}]",
+            "[{\"type\":\"matching.v1.Details\",\"jsonBody\":{\"unknown\":1}}]",
+            "[{\"type\":\"matching.v1.Details\",\"jsonBody\":{\"number\":\"bad\"}}]",
+            "[{\"type\":\"matching.v1.Details\",\"jsonBody\":{},\"extra\":true}]"})
+    void rejectsInvalidDetailsWithoutSendingPartialPayloads(String details) throws Exception {
+        ResponseDefinitionBuilder response = aResponse().withTransformerParameter("error", Json.read(
+                "{\"code\":\"invalid_argument\",\"details\":" + details + "}", Object.class));
+        stub(RPC_PATH, response);
+        HttpResponse<byte[]> actual = send(RPC_PATH, "POST", "application/proto", Map.of());
+        assertInternal(actual);
+        assertTrue(!body(actual).containsKey("details"));
+        assertTrue(Json.write(server.getAllServeEvents().get(0).getSubEvents())
+                .contains("Invalid connect-rpc response configuration"));
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"{}", "{\"jsonBody\":{},\"error\":{\"code\":\"internal\"}}",
             "{\"extra\":true}", "{\"jsonBody\":{\"unknown\":true}}", "{\"jsonBody\":null}",
             "{\"jsonBody\":42}", "{\"jsonBody\":[]}", "{\"error\":null}", "{\"error\":{}}",
@@ -164,6 +228,11 @@ class ConnectResponseTransformerTest {
 
     private Map<?, ?> body(HttpResponse<byte[]> response) {
         return Json.read(new String(response.body(), StandardCharsets.UTF_8), Map.class);
+    }
+
+    private DynamicMessage decodeDetail(Map<?, ?> detail) throws Exception {
+        return DynamicMessage.parseFrom(schemas.resolveMessage((String) detail.get("type")),
+                Base64.getDecoder().decode((String) detail.get("value")));
     }
 
     private void assertInternal(HttpResponse<byte[]> response) {
