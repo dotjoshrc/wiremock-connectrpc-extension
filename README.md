@@ -195,6 +195,73 @@ buf lint
 buf build --as-file-descriptor-set --exclude-source-info -o ../resources/descriptors/matching.binpb
 ```
 
+## GitHub Packages
+
+Releases are published to this repository's
+[Maven registry](https://github.com/dotjoshrc/wiremock-connectrpc-extension/packages).
+Each version includes the normal library JAR, its POM, and the `standalone`
+classifier JAR described above.
+
+### Publishing a release
+
+1. Merge the intended changes to `main` and confirm the pull request checks pass.
+2. Create and publish a GitHub Release from that commit using a new tag in
+   `vMAJOR.MINOR.PATCH` format, such as `v0.1.0`.
+3. Check the **Publish to GitHub Packages** Actions run. It sets the Maven version
+   from the tag (`v0.1.0` becomes `0.1.0`), runs unit and standalone integration
+   tests, and deploys both JARs and the POM to the registry.
+
+The workflow uses the repository's `GITHUB_TOKEN` with `packages: write`;
+no additional publishing secret is needed. Drafts and prereleases do not publish.
+The version change happens only in the workflow checkout; the development POM
+keeps its snapshot version. Use a new version for each release rather than
+attempting to overwrite a published version. Creating this workflow does not
+publish a package; the first publication happens when a release is published.
+
+### Using a published release
+
+To consume a published version, add the repository and dependency to your POM
+(replace `0.1.0` with an available release):
+
+```xml
+<repositories>
+  <repository>
+    <id>github</id>
+    <url>https://maven.pkg.github.com/dotjoshrc/wiremock-connectrpc-extension</url>
+  </repository>
+</repositories>
+
+<dependencies>
+  <dependency>
+    <groupId>io.github.dotjoshrc</groupId>
+    <artifactId>wiremock-connectrpc-extension</artifactId>
+    <version>0.1.0</version>
+  </dependency>
+</dependencies>
+```
+
+GitHub Packages requires authentication for downloads, including public
+packages. Create a personal access token (classic) with `read:packages` and
+access to the package. Set `GITHUB_USERNAME` and `GITHUB_PACKAGES_TOKEN` in your
+environment, then add this server to your Maven `~/.m2/settings.xml`:
+
+```xml
+<settings>
+  <servers>
+    <server>
+      <id>github</id>
+      <username>${env.GITHUB_USERNAME}</username>
+      <password>${env.GITHUB_PACKAGES_TOKEN}</password>
+    </server>
+  </servers>
+</settings>
+```
+
+GitHub Actions consumers can instead use their `GITHUB_TOKEN` with
+`packages: read` when their repository has been granted access to the package.
+For WireMock standalone, download the artifact with classifier `standalone`
+and put it on the classpath alongside WireMock standalone as shown above.
+
 ## Load protobuf schemas
 
 `SchemaRegistry` accepts a binary `google.protobuf.FileDescriptorSet` containing
