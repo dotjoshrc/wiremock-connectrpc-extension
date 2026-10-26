@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/example.v1.GreeterService/Greet",
+    "headers": {
+      "Connect-Protocol-Version": { "equalTo": "1" }
+    },
+    "customMatcher": {
+      "name": "connect-rpc",
+      "parameters": {
+        "jsonBody": { "name": "Denied" }
+      }
+    }
+  },
+  "response": {
+    "transformers": ["connect-rpc-response"],
+    "transformerParameters": {
+      "error": { "code": "permission_denied", "message": "Access denied" }
+    }
+  }
+}

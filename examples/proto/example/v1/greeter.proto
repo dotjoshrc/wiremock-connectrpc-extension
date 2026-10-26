@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package example.v1;
+
+import "example/v1/greet.proto";
+
+option go_package = "github.com/dotjoshrc/wiremock-connectrpc-extension/examples/client/gen/example/v1;examplev1";
+
+// GreeterService is a test fixture for unary Connect calls.
+service GreeterService {
+  // Greet returns a greeting for the supplied name.
+  rpc Greet(GreetRequest) returns (GreetResponse);
+}

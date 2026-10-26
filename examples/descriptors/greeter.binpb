@@ -1,0 +1,13 @@
+
+Ü
+example/v1/greet.proto
+example.v1""
+GreetRequest
+name (	Rname"+
+GreetResponse
+greeting (	RgreetingB]Z[github.com/dotjoshrc/wiremock-connectrpc-extension/examples/client/gen/example/v1;examplev1bproto3
+õ
+example/v1/greeter.proto
+example.v1example/v1/greet.proto2N
+GreeterService<
+Greet.example.v1.GreetRequest.example.v1.GreetResponseB]Z[github.com/dotjoshrc/wiremock-connectrpc-extension/examples/client/gen/example/v1;examplev1bproto3

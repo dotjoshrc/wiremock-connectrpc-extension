@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/example.v1.GreeterService/Greet",
+    "headers": {
+      "Content-Type": { "equalTo": "application/json" },
+      "Connect-Protocol-Version": { "equalTo": "1" }
+    },
+    "bodyPatterns": [
+      { "equalToJson": { "name": "Josh" } }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "greeting": "Hello, Josh!"
+    }
+  }
+}

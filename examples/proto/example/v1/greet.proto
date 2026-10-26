@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package example.v1;
+
+option go_package = "github.com/dotjoshrc/wiremock-connectrpc-extension/examples/client/gen/example/v1;examplev1";
+
+message GreetRequest {
+  // Name to include in the greeting.
+  string name = 1;
+}
+
+message GreetResponse {
+  // Greeting returned to the caller.
+  string greeting = 1;
+}
